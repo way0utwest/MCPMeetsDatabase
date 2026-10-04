@@ -1,0 +1,182 @@
+{
+  "$schema": "https://github.com/Azure/data-api-builder/releases/latest/download/dab.draft.schema.json",
+  "data-source": {
+    "database-type": "mssql",
+    "connection-string": "@env('SHIFTSWAP_CONN')",
+    "options": { "set-session-context": false }
+  },
+  "runtime": {
+    "rest": { "enabled": true, "path": "/api" },
+    "graphql": { "enabled": true, "path": "/graphql", "allow-introspection": true },
+    "mcp": {
+      "enabled": true,
+      "path": "/mcp",
+      "description": "ShiftSwap scheduling. Employees view their schedule, request vacation, and swap shifts with colleagues in the same job. Managers approve vacation. All changes go through named tools; there is no way to edit tables directly. The acting employee is identified by the Email parameter, which the application sets from the signed-in user's token. Never ask the user for their email.",
+      "dml-tools": {
+        "describe-entities": true,
+        "read-records": true,
+        "aggregate-records": false,
+        "create-record": false,
+        "update-record": false,
+        "delete-record": false,
+        "execute-entity": false
+      }
+    },
+    "host": {
+      "mode": "development",
+      "cors": { "origins": ["https://localhost:7101"], "allow-credentials": true },
+      "authentication": {
+        "provider": "EntraId",
+        "jwt": {
+          "audience": "@env('SHIFTSWAP_API_AUDIENCE')",
+          "issuer": "@env('SHIFTSWAP_ISSUER')"
+        }
+      }
+    },
+    "telemetry": {
+      "open-telemetry": { "enabled": false, "endpoint": "http://localhost:4317", "service-name": "shiftswap-dab" }
+    }
+  },
+  "entities": {
+
+    "Job": {
+      "source": { "object": "dbo.Job", "type": "table" },
+      "description": "Jobs an employee can be scheduled for, such as Cashier or Cook.",
+      "permissions": [ { "role": "authenticated", "actions": [ "read" ] } ],
+      "mcp": { "dml-tools": true }
+    },
+
+    "Employee": {
+      "source": { "object": "dbo.Employee", "type": "table" },
+      "description": "Employees. Email is the identity used everywhere. Only active employees appear in the schedule.",
+      "permissions": [
+        { "role": "authenticated", "actions": [ { "action": "read", "fields": { "exclude": [ "ManagerId", "CreatedAt" ] } } ] }
+      ],
+      "relationships": {
+        "job": { "cardinality": "one", "target.entity": "Job", "source.fields": [ "JobId" ], "target.fields": [ "JobId" ] }
+      },
+      "mcp": { "dml-tools": true }
+    },
+
+    "Shift": {
+      "source": { "object": "dbo.Shift", "type": "table" },
+      "description": "Scheduled shifts. AssignedEmployeeId is null for an open shift.",
+      "permissions": [ { "role": "authenticated", "actions": [ "read" ] } ],
+      "relationships": {
+        "job": { "cardinality": "one", "target.entity": "Job", "source.fields": [ "JobId" ], "target.fields": [ "JobId" ] },
+        "assignedEmployee": { "cardinality": "one", "target.entity": "Employee", "source.fields": [ "AssignedEmployeeId" ], "target.fields": [ "EmployeeId" ] }
+      },
+      "mcp": { "dml-tools": true }
+    },
+
+    "Schedule_Get": {
+      "source": { "object": "dbo.Schedule_Get", "type": "stored-procedure",
+                  "parameters": { "Email": "", "FromDate": null, "ToDate": null } },
+      "description": "Returns the acting employee's own assigned shifts between FromDate and ToDate (yyyy-mm-dd). Defaults to the next 14 days. Use this when the user asks about their schedule, when they work next, or which shift they could swap. Each row includes ShiftId, which is needed for swap_request.",
+      "rest": { "enabled": false },
+      "graphql": { "enabled": true, "operation": "query" },
+      "permissions": [ { "role": "authenticated", "actions": [ "execute" ] } ],
+      "mcp": { "custom-tool": true }
+    },
+
+    "Schedule_GetTeam": {
+      "source": { "object": "dbo.Schedule_GetTeam", "type": "stored-procedure",
+                  "parameters": { "Email": "", "FromDate": null, "ToDate": null } },
+      "description": "Returns every shift for the acting employee's job between FromDate and ToDate, with who is assigned and whether the shift is open or already in a pending swap. Use this to find a colleague's shift to swap with. Rows with IsMine = 1 belong to the user.",
+      "rest": { "enabled": false },
+      "graphql": { "enabled": true, "operation": "query" },
+      "permissions": [ { "role": "authenticated", "actions": [ "execute" ] } ],
+      "mcp": { "custom-tool": true }
+    },
+
+    "Vacation_List": {
+      "source": { "object": "dbo.Vacation_List", "type": "stored-procedure",
+                  "parameters": { "Email": "", "IncludeTeam": false } },
+      "description": "Lists the acting employee's vacation requests with status (Requested, Approved, Denied, Cancelled). Managers can pass IncludeTeam = true to also see their direct reports' requests awaiting a decision.",
+      "rest": { "enabled": false },
+      "graphql": { "enabled": true, "operation": "query" },
+      "permissions": [ { "role": "authenticated", "actions": [ "execute" ] } ],
+      "mcp": { "custom-tool": true }
+    },
+
+    "Vacation_Request": {
+      "source": { "object": "dbo.Vacation_Request", "type": "stored-procedure",
+                  "parameters": { "Email": "", "StartDate": "", "EndDate": "", "Reason": null } },
+      "description": "Requests vacation for the acting employee from StartDate to EndDate inclusive (yyyy-mm-dd), with an optional short Reason. Fails if the dates overlap an existing request or start in the past. This changes data: confirm dates with the user before calling.",
+      "rest": { "enabled": false },
+      "graphql": { "enabled": true, "operation": "mutation" },
+      "permissions": [ { "role": "authenticated", "actions": [ "execute" ] } ],
+      "mcp": { "custom-tool": true }
+    },
+
+    "Vacation_Cancel": {
+      "source": { "object": "dbo.Vacation_Cancel", "type": "stored-procedure",
+                  "parameters": { "Email": "", "VacationId": 0 } },
+      "description": "Cancels one of the acting employee's own vacation requests by VacationId (from vacation_list). Managers may cancel a direct report's request. Only future, Requested or Approved vacation can be cancelled. This changes data: confirm with the user first.",
+      "rest": { "enabled": false },
+      "graphql": { "enabled": true, "operation": "mutation" },
+      "permissions": [ { "role": "authenticated", "actions": [ "execute" ] } ],
+      "mcp": { "custom-tool": true }
+    },
+
+    "Vacation_Approve": {
+      "source": { "object": "dbo.Vacation_Approve", "type": "stored-procedure",
+                  "parameters": { "ManagerEmail": "", "VacationId": 0, "Approve": true, "Notes": null } },
+      "description": "Manager only. Approves (Approve = true) or denies (Approve = false) a direct report's vacation request by VacationId, with optional Notes. Use vacation_list with IncludeTeam = true to find pending requests. This changes data: confirm with the manager first.",
+      "rest": { "enabled": false },
+      "graphql": { "enabled": true, "operation": "mutation" },
+      "permissions": [ { "role": "manager", "actions": [ "execute" ] } ],
+      "mcp": { "custom-tool": true }
+    },
+
+    "Swap_List": {
+      "source": { "object": "dbo.Swap_List", "type": "stored-procedure",
+                  "parameters": { "Email": "" } },
+      "description": "Lists shift swaps the acting employee is part of, as requester or counterparty, with both shifts, each side's approval flag, and status (Pending, Completed, Declined, Cancelled). Use it to see what is waiting on the user.",
+      "rest": { "enabled": false },
+      "graphql": { "enabled": true, "operation": "query" },
+      "permissions": [ { "role": "authenticated", "actions": [ "execute" ] } ],
+      "mcp": { "custom-tool": true }
+    },
+
+    "Swap_Request": {
+      "source": { "object": "dbo.Swap_Request", "type": "stored-procedure",
+                  "parameters": { "Email": "", "MyShiftId": 0, "TheirShiftId": 0 } },
+      "description": "Proposes swapping one of the acting employee's shifts (MyShiftId, from schedule_get) for a colleague's shift (TheirShiftId, from schedule_get_team). Both must be the same job and in the future. The colleague must then approve with swap_approve before anything moves. This changes data: confirm both shifts with the user first.",
+      "rest": { "enabled": false },
+      "graphql": { "enabled": true, "operation": "mutation" },
+      "permissions": [ { "role": "authenticated", "actions": [ "execute" ] } ],
+      "mcp": { "custom-tool": true }
+    },
+
+    "Swap_Approve": {
+      "source": { "object": "dbo.Swap_Approve", "type": "stored-procedure",
+                  "parameters": { "Email": "", "SwapId": 0 } },
+      "description": "Approves a pending swap (SwapId from swap_list) that the acting employee is part of. When both employees have approved, the two shifts exchange owners immediately. This changes data: confirm with the user first.",
+      "rest": { "enabled": false },
+      "graphql": { "enabled": true, "operation": "mutation" },
+      "permissions": [ { "role": "authenticated", "actions": [ "execute" ] } ],
+      "mcp": { "custom-tool": true }
+    },
+
+    "Swap_Decline": {
+      "source": { "object": "dbo.Swap_Decline", "type": "stored-procedure",
+                  "parameters": { "Email": "", "SwapId": 0 } },
+      "description": "Declines a pending swap where the acting employee is the one being asked (counterparty). Requesters should use swap_cancel instead. This changes data: confirm first.",
+      "rest": { "enabled": false },
+      "graphql": { "enabled": true, "operation": "mutation" },
+      "permissions": [ { "role": "authenticated", "actions": [ "execute" ] } ],
+      "mcp": { "custom-tool": true }
+    },
+
+    "Swap_Cancel": {
+      "source": { "object": "dbo.Swap_Cancel", "type": "stored-procedure",
+                  "parameters": { "Email": "", "SwapId": 0 } },
+      "description": "Cancels a pending swap the acting employee requested. Counterparties should use swap_decline instead. This changes data: confirm first.",
+      "rest": { "enabled": false },
+      "graphql": { "enabled": true, "operation": "mutation" },
+      "permissions": [ { "role": "authenticated", "actions": [ "execute" ] } ],
+      "mcp": { "custom-tool": true }
+    }
+  }
+}

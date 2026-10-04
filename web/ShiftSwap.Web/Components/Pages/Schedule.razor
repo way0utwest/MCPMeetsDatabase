@@ -1,0 +1,42 @@
+@page "/"
+@inject DabGraphQlClient Dab
+
+<h1>My schedule</h1>
+<p class="muted">Next two weeks. Shifts marked ⇄ are in a pending swap.</p>
+
+@if (error is not null) { <div class="error">@error</div> }
+@if (rows is null) { <p>Loading…</p> }
+else if (rows.Count == 0) { <p>No shifts scheduled.</p> }
+else
+{
+    <table>
+        <thead><tr><th>Date</th><th>Day</th><th>Time</th><th>Job</th><th>Where</th><th></th></tr></thead>
+        <tbody>
+        @foreach (var r in rows)
+        {
+            <tr>
+                <td>@r!["ShiftDate"]</td>
+                <td>@r["DayName"]</td>
+                <td>@Time(r["StartTime"]) – @Time(r["EndTime"])</td>
+                <td>@r["JobName"]</td>
+                <td>@r["Location"]</td>
+                <td>@(r["InPendingSwap"]?.GetValue<int>() == 1 ? "⇄" : "")
+                    <a href="team?swap=@r["ShiftId"]">swap</a></td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+
+@code {
+    private JsonArray? rows;
+    private string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { rows = await Dab.ScheduleGetAsync(); }
+        catch (Exception ex) { error = ex.Message; rows = new JsonArray(); }
+    }
+
+    private static string Time(JsonNode? n) => n?.GetValue<string>()?[..5] ?? "";
+}

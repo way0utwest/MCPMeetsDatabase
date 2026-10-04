@@ -1,0 +1,25 @@
+@inherits LayoutComponentBase
+@inject CurrentUser User
+
+<div class="shell">
+    <nav class="side">
+        <div class="brand">ShiftSwap</div>
+        <NavLink href="" Match="NavLinkMatch.All">My schedule</NavLink>
+        <NavLink href="team">Team schedule</NavLink>
+        <NavLink href="vacations">Vacation</NavLink>
+        <NavLink href="swaps">Shift swaps</NavLink>
+        @if (User.IsManager)
+        {
+            <NavLink href="approvals">Approvals</NavLink>
+        }
+        <NavLink href="chat">Assistant</NavLink>
+        <div class="who">
+            <div>@User.DisplayName</div>
+            <small>@User.Email @(User.IsManager ? "· manager" : "")</small>
+            <a href="MicrosoftIdentity/Account/SignOut">Sign out</a>
+        </div>
+    </nav>
+    <main class="content">
+        @Body
+    </main>
+</div>

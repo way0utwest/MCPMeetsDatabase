@@ -1,0 +1,62 @@
+@page "/swaps"
+@inject DabGraphQlClient Dab
+
+<h1>Shift swaps</h1>
+<p class="muted">A swap completes when both people approve. Start one from <a href="">My schedule</a>.</p>
+
+@if (error is not null) { <div class="error">@error</div> }
+@if (rows is null) { <p>Loading…</p> }
+else if (rows.Count == 0) { <p>No swaps.</p> }
+else
+{
+    <table>
+        <thead><tr><th>Status</th><th>Requester gives</th><th>Counterparty gives</th><th>Approvals</th><th></th></tr></thead>
+        <tbody>
+        @foreach (var r in rows)
+        {
+            var status = r!["Status"]!.GetValue<string>();
+            var myRole = r["MyRole"]!.GetValue<string>();
+            var reqOk = r["RequesterApproved"]!.GetValue<bool>();
+            var cpOk = r["CounterpartyApproved"]!.GetValue<bool>();
+            var id = r["SwapId"]!.GetValue<int>();
+            var iApproved = myRole == "Requester" ? reqOk : cpOk;
+            <tr>
+                <td><span class="pill @status.ToLower()">@status</span></td>
+                <td>@r["RequesterName"]: @r["RequesterShiftDate"] @Time(r["RequesterStart"])–@Time(r["RequesterEnd"])</td>
+                <td>@r["CounterpartyName"]: @r["CounterpartyShiftDate"] @Time(r["CounterpartyStart"])–@Time(r["CounterpartyEnd"])</td>
+                <td>@(reqOk ? "✓" : "·") requester &nbsp; @(cpOk ? "✓" : "·") counterparty</td>
+                <td>
+                    @if (status == "Pending")
+                    {
+                        if (!iApproved) { <button @onclick="() => Do(() => Dab.SwapApproveAsync(id))">approve</button> }
+                        if (myRole == "Counterparty") { <button class="secondary" @onclick="() => Do(() => Dab.SwapDeclineAsync(id))">decline</button> }
+                        if (myRole == "Requester") { <button class="secondary" @onclick="() => Do(() => Dab.SwapCancelAsync(id))">cancel</button> }
+                    }
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+
+@code {
+    private JsonArray? rows;
+    private string? error;
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        try { rows = await Dab.SwapListAsync(); }
+        catch (Exception ex) { error = ex.Message; rows = new JsonArray(); }
+    }
+
+    private async Task Do(Func<Task<JsonArray>> action)
+    {
+        error = null;
+        try { await action(); await Load(); }
+        catch (Exception ex) { error = ex.Message; }
+    }
+
+    private static string Time(JsonNode? n) => n?.GetValue<string>()?[..5] ?? "";
+}

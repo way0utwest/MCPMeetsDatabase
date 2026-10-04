@@ -1,0 +1,95 @@
+@page "/chat"
+@inject ShiftAgent Agent
+@implements IAsyncDisposable
+
+<h1>Assistant</h1>
+<p class="muted">Ask about your schedule, request time off, or set up a shift swap. The assistant will confirm before changing anything.</p>
+
+<div class="chat">
+    <div class="messages">
+        @foreach (var m in messages)
+        {
+            <div class="msg @m.Role">@((MarkupString)Render(m.Text))</div>
+        }
+        @if (busy) { <div class="msg assistant typing">…</div> }
+    </div>
+
+    <form @onsubmit="Send" @onsubmit:preventDefault class="composer">
+        <input @bind="input" @bind:event="oninput" placeholder="e.g. What am I working next week?" disabled="@busy" />
+        <button type="submit" disabled="@(busy || string.IsNullOrWhiteSpace(input))">Send</button>
+    </form>
+
+    <div class="suggestions">
+        @foreach (var s in suggestions)
+        {
+            <button class="chip" @onclick="() => { input = s; return Send(); }" disabled="@busy">@s</button>
+        }
+    </div>
+</div>
+
+<details class="toolcalls">
+    <summary>Tool calls (@Agent.ToolCalls.Count)</summary>
+    @foreach (var t in Agent.ToolCalls.AsEnumerable().Reverse())
+    {
+        <div class="toolcall @(t.IsWrite ? "write" : "read")">
+            <div><code>@t.Tool</code> <small>@t.At.ToLocalTime():HH:mm:ss</small> @(t.IsWrite ? "✎ write" : "read")</div>
+            <pre>@t.Arguments</pre>
+            <pre class="result">@Truncate(t.Result)</pre>
+        </div>
+    }
+</details>
+
+@code {
+    private sealed record Msg(string Role, string Text);
+    private readonly List<Msg> messages = new();
+    private string input = "";
+    private bool busy;
+    private CancellationTokenSource? cts;
+
+    private readonly string[] suggestions =
+    {
+        "What am I working next week?",
+        "Do I have any swaps waiting on me?",
+        "Request Friday off next week",
+        "Who else works my job on Saturday?"
+    };
+
+    private async Task Send()
+    {
+        var text = input.Trim();
+        if (text.Length == 0 || busy) return;
+        input = "";
+        busy = true;
+        messages.Add(new Msg("user", text));
+        var reply = new System.Text.StringBuilder();
+        messages.Add(new Msg("assistant", ""));
+        var idx = messages.Count - 1;
+
+        cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        try
+        {
+            await foreach (var chunk in Agent.AskAsync(text, cts.Token))
+            {
+                reply.Append(chunk);
+                messages[idx] = new Msg("assistant", reply.ToString());
+                StateHasChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            messages[idx] = new Msg("assistant", $"Sorry, something went wrong: {ex.Message}");
+        }
+        finally { busy = false; }
+    }
+
+    private static string Render(string text) =>
+        System.Net.WebUtility.HtmlEncode(text).Replace("\n", "<br/>");
+
+    private static string Truncate(string s) => s.Length > 1200 ? s[..1200] + "…" : s;
+
+    public async ValueTask DisposeAsync()
+    {
+        cts?.Cancel();
+        await Agent.DisposeAsync();
+    }
+}

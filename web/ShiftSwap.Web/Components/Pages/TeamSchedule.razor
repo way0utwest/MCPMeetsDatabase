@@ -1,0 +1,68 @@
+@page "/team"
+@inject DabGraphQlClient Dab
+@inject NavigationManager Nav
+
+<h1>Team schedule</h1>
+@if (SwapShiftId is not null)
+{
+    <div class="banner">Pick a colleague's shift to swap with your shift #@SwapShiftId. <a href="team">cancel</a></div>
+}
+
+@if (error is not null) { <div class="error">@error</div> }
+@if (message is not null) { <div class="ok">@message</div> }
+@if (rows is null) { <p>Loading…</p> }
+else
+{
+    <table>
+        <thead><tr><th>Date</th><th>Time</th><th>Who</th><th></th></tr></thead>
+        <tbody>
+        @foreach (var r in rows)
+        {
+            var mine = r!["IsMine"]?.GetValue<int>() == 1;
+            var open = r["IsOpen"]?.GetValue<int>() == 1;
+            var pending = r["InPendingSwap"]?.GetValue<int>() == 1;
+            <tr class="@(mine ? "mine" : "")">
+                <td>@r["ShiftDate"] <small>@r["DayName"]</small></td>
+                <td>@Time(r["StartTime"]) – @Time(r["EndTime"])</td>
+                <td>@(open ? "open" : r["AssignedName"])</td>
+                <td>
+                    @if (SwapShiftId is not null && !mine && !open && !pending)
+                    {
+                        <button @onclick="() => Propose(r["ShiftId"]!.GetValue<int>())">propose swap</button>
+                    }
+                    @if (pending) { <span>⇄ pending</span> }
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "swap")] public int? SwapShiftId { get; set; }
+
+    private JsonArray? rows;
+    private string? error, message;
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        try { rows = await Dab.ScheduleGetTeamAsync(); error = null; }
+        catch (Exception ex) { error = ex.Message; rows = new JsonArray(); }
+    }
+
+    private async Task Propose(int theirShiftId)
+    {
+        try
+        {
+            var r = await Dab.SwapRequestAsync(SwapShiftId!.Value, theirShiftId);
+            message = $"Swap #{r[0]!["SwapId"]} proposed. Waiting for the other person to approve.";
+            Nav.NavigateTo("team");
+            await Load();
+        }
+        catch (Exception ex) { error = ex.Message; }
+    }
+
+    private static string Time(JsonNode? n) => n?.GetValue<string>()?[..5] ?? "";
+}

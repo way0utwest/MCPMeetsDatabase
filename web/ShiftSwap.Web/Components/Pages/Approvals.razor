@@ -1,0 +1,50 @@
+@page "/approvals"
+@attribute [Authorize(Policy = "Manager")]
+@inject DabGraphQlClient Dab
+
+<h1>Vacation approvals</h1>
+@if (error is not null) { <div class="error">@error</div> }
+@if (rows is null) { <p>Loading…</p> }
+else
+{
+    var pending = rows.Where(r => r!["Status"]?.GetValue<string>() == "Requested" && r["IsMine"]?.GetValue<int>() == 0).ToList();
+    if (pending.Count == 0) { <p>Nothing waiting.</p> }
+    <table>
+        <thead><tr><th>Who</th><th>From</th><th>To</th><th>Reason</th><th>Notes</th><th></th></tr></thead>
+        <tbody>
+        @foreach (var r in pending)
+        {
+            var id = r!["VacationId"]!.GetValue<int>();
+            notes.TryAdd(id, "");
+            <tr>
+                <td>@r["DisplayName"]</td><td>@r["StartDate"]</td><td>@r["EndDate"]</td><td>@r["Reason"]</td>
+                <td><input @bind="notes[id]" placeholder="optional" /></td>
+                <td>
+                    <button @onclick="() => Decide(id, true)">approve</button>
+                    <button class="secondary" @onclick="() => Decide(id, false)">deny</button>
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+
+@code {
+    private JsonArray? rows;
+    private string? error;
+    private readonly Dictionary<int, string> notes = new();
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        try { rows = await Dab.VacationListAsync(includeTeam: true); }
+        catch (Exception ex) { error = ex.Message; rows = new JsonArray(); }
+    }
+
+    private async Task Decide(int id, bool approve)
+    {
+        try { await Dab.VacationApproveAsync(id, approve, notes.GetValueOrDefault(id)); await Load(); }
+        catch (Exception ex) { error = ex.Message; }
+    }
+}

@@ -1,0 +1,70 @@
+@page "/vacations"
+@inject DabGraphQlClient Dab
+
+<h1>Vacation</h1>
+
+<section class="card">
+    <h2>Request time off</h2>
+    <EditForm Model="form" OnValidSubmit="Submit">
+        <label>From <InputDate @bind-Value="form.Start" /></label>
+        <label>To <InputDate @bind-Value="form.End" /></label>
+        <label>Reason <InputText @bind-Value="form.Reason" maxlength="400" /></label>
+        <button type="submit">Request</button>
+    </EditForm>
+</section>
+
+@if (error is not null) { <div class="error">@error</div> }
+@if (message is not null) { <div class="ok">@message</div> }
+
+<h2>My requests</h2>
+@if (rows is null) { <p>Loading…</p> }
+else if (rows.Count == 0) { <p>None yet.</p> }
+else
+{
+    <table>
+        <thead><tr><th>From</th><th>To</th><th>Status</th><th>Reason</th><th>Decision</th><th></th></tr></thead>
+        <tbody>
+        @foreach (var r in rows)
+        {
+            var status = r!["Status"]?.GetValue<string>();
+            <tr>
+                <td>@r["StartDate"]</td><td>@r["EndDate"]</td>
+                <td><span class="pill @status?.ToLower()">@status</span></td>
+                <td>@r["Reason"]</td>
+                <td>@r["DecidedBy"] @r["DecisionNotes"]</td>
+                <td>@if (status is "Requested" or "Approved")
+                    { <button @onclick="() => Cancel(r["VacationId"]!.GetValue<int>())">cancel</button> }</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+
+@code {
+    private sealed class Form { public DateOnly Start { get; set; } = DateOnly.FromDateTime(DateTime.Today.AddDays(7)); public DateOnly End { get; set; } = DateOnly.FromDateTime(DateTime.Today.AddDays(8)); public string? Reason { get; set; } }
+    private readonly Form form = new();
+    private JsonArray? rows;
+    private string? error, message;
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        try { rows = await Dab.VacationListAsync(); }
+        catch (Exception ex) { error = ex.Message; rows = new JsonArray(); }
+    }
+
+    private async Task Submit()
+    {
+        error = message = null;
+        try { await Dab.VacationRequestAsync(form.Start, form.End, form.Reason); message = "Requested."; await Load(); }
+        catch (Exception ex) { error = ex.Message; }
+    }
+
+    private async Task Cancel(int id)
+    {
+        error = message = null;
+        try { await Dab.VacationCancelAsync(id); message = "Cancelled."; await Load(); }
+        catch (Exception ex) { error = ex.Message; }
+    }
+}
